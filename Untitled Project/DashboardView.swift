@@ -215,7 +215,7 @@ private struct SubjectRow: View {
                     .bold()
                     .foregroundStyle(grade >= 5.0 ? .green : .red)
                 if let maxScore = subject.maxScoreSoFar {
-                    Text("/\(maxScore.flexibleText)")
+                    Text("/ \(maxScore.flexibleText)")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                 }
