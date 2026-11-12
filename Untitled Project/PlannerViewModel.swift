@@ -95,6 +95,13 @@ enum FormulaMode: Int, Codable {
     case custom = 1
 }
 
+/// Propiedad libre que el usuario añade a una asignatura (nombre + valor)
+struct CustomProperty: Identifiable, Codable, Hashable {
+    var id = UUID()
+    var name = ""
+    var value = ""
+}
+
 struct Subject: Identifiable, Codable {
     let id: UUID
     var name: String
@@ -106,6 +113,7 @@ struct Subject: Identifiable, Codable {
     var ects: Double
     var colorName: String
     var evaluations: [Evaluation]
+    var customProperties: [CustomProperty]
 
     // Fórmula de la nota final
     var formulaMode: FormulaMode
@@ -116,7 +124,7 @@ struct Subject: Identifiable, Codable {
         Color(hex: colorName)
     }
 
-    init(id: UUID = UUID(), name: String, iconName: String, teacher: String = "", email: String = "", tutoringLocation: String = "", classroom: String = "", ects: Double = 6.0, colorName: String = "#007AFF", evaluations: [Evaluation] = [], formulaMode: FormulaMode = .weightedAverage, customExpression: String = "Media", treatPendingAsZero: Bool = true) {
+    init(id: UUID = UUID(), name: String, iconName: String, teacher: String = "", email: String = "", tutoringLocation: String = "", classroom: String = "", ects: Double = 6.0, colorName: String = "#007AFF", evaluations: [Evaluation] = [], customProperties: [CustomProperty] = [], formulaMode: FormulaMode = .weightedAverage, customExpression: String = "Media", treatPendingAsZero: Bool = true) {
         self.id = id
         self.name = name
         self.iconName = iconName
@@ -127,6 +135,7 @@ struct Subject: Identifiable, Codable {
         self.ects = ects
         self.colorName = colorName
         self.evaluations = evaluations
+        self.customProperties = customProperties
         self.formulaMode = formulaMode
         self.customExpression = customExpression
         self.treatPendingAsZero = treatPendingAsZero
@@ -134,7 +143,7 @@ struct Subject: Identifiable, Codable {
 
     // Decodificación tolerante: los datos guardados antes de añadir la fórmula siguen cargando
     enum CodingKeys: String, CodingKey {
-        case id, name, iconName, teacher, email, tutoringLocation, classroom, ects, colorName, evaluations
+        case id, name, iconName, teacher, email, tutoringLocation, classroom, ects, colorName, evaluations, customProperties
         case formulaMode, customExpression, treatPendingAsZero
     }
 
@@ -150,6 +159,7 @@ struct Subject: Identifiable, Codable {
         ects = try c.decodeIfPresent(Double.self, forKey: .ects) ?? 6.0
         colorName = try c.decodeIfPresent(String.self, forKey: .colorName) ?? "#007AFF"
         evaluations = try c.decodeIfPresent([Evaluation].self, forKey: .evaluations) ?? []
+        customProperties = try c.decodeIfPresent([CustomProperty].self, forKey: .customProperties) ?? []
         formulaMode = try c.decodeIfPresent(FormulaMode.self, forKey: .formulaMode) ?? .weightedAverage
         customExpression = try c.decodeIfPresent(String.self, forKey: .customExpression) ?? "Media"
         treatPendingAsZero = try c.decodeIfPresent(Bool.self, forKey: .treatPendingAsZero) ?? true
@@ -340,7 +350,7 @@ final class PlannerViewModel {
     }
 
     // MARK: Asignaturas
-    func addSubject(name: String, iconName: String, teacher: String, email: String, tutoringLocation: String, classroom: String, ects: Double, colorName: String) {
+    func addSubject(name: String, iconName: String, teacher: String, email: String, tutoringLocation: String, classroom: String, ects: Double, colorName: String, customProperties: [CustomProperty] = []) {
         subjects.append(Subject(
             name: name,
             iconName: iconName,
@@ -349,12 +359,13 @@ final class PlannerViewModel {
             tutoringLocation: tutoringLocation,
             classroom: classroom,
             ects: ects,
-            colorName: colorName
+            colorName: colorName,
+            customProperties: customProperties
         ))
         saveSubjects()
     }
 
-    func updateSubject(id: UUID, name: String, iconName: String, teacher: String, email: String, tutoringLocation: String, classroom: String, ects: Double, colorName: String) {
+    func updateSubject(id: UUID, name: String, iconName: String, teacher: String, email: String, tutoringLocation: String, classroom: String, ects: Double, colorName: String, customProperties: [CustomProperty] = []) {
         modifySubject(id) {
             $0.name = name
             $0.iconName = iconName
@@ -364,6 +375,7 @@ final class PlannerViewModel {
             $0.classroom = classroom
             $0.ects = ects
             $0.colorName = colorName
+            $0.customProperties = customProperties
         }
     }
 
