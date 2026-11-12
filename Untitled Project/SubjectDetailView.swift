@@ -76,6 +76,9 @@ struct SubjectDetailView: View {
                 if !subject.tutoringLocation.isEmpty {
                     property("Tutorías", systemImage: "mappin.and.ellipse", value: subject.tutoringLocation)
                 }
+                ForEach(subject.customProperties) { custom in
+                    property(custom.name, systemImage: "tag.fill", value: custom.value.isEmpty ? "—" : custom.value)
+                }
 
                 DisclosureGroup("Más propiedades", isExpanded: $showsMoreProperties) {
                     if !subject.classroom.isEmpty {
