@@ -487,6 +487,7 @@ struct SubjectFormView: View {
     @State private var color: Color
     @State private var iconName: String
     @State private var showsExtraInfo: Bool
+    @State private var customProperties: [CustomProperty]
 
     init(viewModel: PlannerViewModel, subject: Subject? = nil) {
         self.viewModel = viewModel
@@ -499,6 +500,7 @@ struct SubjectFormView: View {
         _ectsText = State(initialValue: (subject?.ects ?? 6).compactText)
         _color = State(initialValue: subject?.color ?? .blue)
         _iconName = State(initialValue: subject?.iconName ?? "book.fill")
+        _customProperties = State(initialValue: subject?.customProperties ?? [])
         _showsExtraInfo = State(initialValue: subject.map {
             !$0.teacher.isEmpty || !$0.email.isEmpty || !$0.classroom.isEmpty || !$0.tutoringLocation.isEmpty
         } ?? false)
@@ -556,6 +558,24 @@ struct SubjectFormView: View {
                         TextField("Tutorías", text: $tutoringLocation)
                     }
                 }
+
+                Section("Propiedades personalizadas") {
+                    ForEach($customProperties) { $property in
+                        HStack(spacing: 12) {
+                            TextField("Nombre", text: $property.name)
+                            TextField("Valor", text: $property.value)
+                                .multilineTextAlignment(.trailing)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .onDelete { customProperties.remove(atOffsets: $0) }
+
+                    Button {
+                        customProperties.append(CustomProperty())
+                    } label: {
+                        Label("Añadir propiedad", systemImage: "plus.circle.fill")
+                    }
+                }
             }
             .navigationTitle(isEditing ? "Editar Asignatura" : "Nueva Asignatura")
             .navigationBarTitleDisplayMode(.inline)
@@ -573,6 +593,16 @@ struct SubjectFormView: View {
 
     private func save() {
         let ects = ectsText.decimalValue ?? subject?.ects ?? 6
+        // Se descartan las propiedades sin nombre
+        let cleanedProperties = customProperties.compactMap { property -> CustomProperty? in
+            let name = property.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty else { return nil }
+            return CustomProperty(
+                id: property.id,
+                name: name,
+                value: property.value.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+        }
         if let subject {
             viewModel.updateSubject(
                 id: subject.id,
@@ -583,7 +613,8 @@ struct SubjectFormView: View {
                 tutoringLocation: tutoringLocation,
                 classroom: classroom,
                 ects: ects,
-                colorName: color.toHex()
+                colorName: color.toHex(),
+                customProperties: cleanedProperties
             )
         } else {
             viewModel.addSubject(
@@ -594,7 +625,8 @@ struct SubjectFormView: View {
                 tutoringLocation: tutoringLocation,
                 classroom: classroom,
                 ects: ects,
-                colorName: color.toHex()
+                colorName: color.toHex(),
+                customProperties: cleanedProperties
             )
         }
         dismiss()
