@@ -1,583 +1,540 @@
 import SwiftUI
 
-// MARK: DASHBOARD VIEW
-struct DashboardView: View {
+// MARK: VISTA DETALLE DE LA ASIGNATURA
+struct SubjectDetailView: View {
+    let subjectID: UUID
     let viewModel: PlannerViewModel
-    let timerManager: StudyTimerManager
 
-    @Environment(\.scenePhase) private var scenePhase
-    @State private var now = Date()
-    @State private var showingAddSubject = false
-    @State private var showingTimer = false
-    @State private var subjectToEdit: Subject?
-    @State private var subjectToDelete: Subject?
+    @State private var showingFormulaSheet = false
+    @State private var showingAddEvaluation = false
+    @State private var evaluationToEdit: Evaluation?
+    @State private var showsMoreProperties = false
 
     var body: some View {
-        let todaySlots = remainingSlotsToday
-        let nextExams = nextExamDay
+        if let subject = viewModel.subject(withID: subjectID) {
+            content(for: subject)
+        } else {
+            ContentUnavailableView("Asignatura no encontrada", systemImage: "questionmark.folder")
+        }
+    }
 
-        List {
-            // SECCIÓN 1: CLASES QUE QUEDAN HOY (se oculta si no queda ninguna)
-            if !todaySlots.isEmpty {
-                Section("Clases de hoy") {
-                    ForEach(todaySlots) { slot in
-                        if let subject = viewModel.subject(withID: slot.subjectID) {
-                            ScheduleSlotRow(slot: slot, subject: subject)
-                        }
-                    }
-                }
-            }
+    private func content(for subject: Subject) -> some View {
+        let grade = subject.calculatedGrade
+        let totalWeight = subject.evaluations.reduce(0) { $0 + $1.weight }
 
-            // SECCIÓN 2: PRÓXIMO EXAMEN
-            Section("Próximo examen") {
-                if nextExams.isEmpty {
-                    ContentUnavailableView(
-                        "Sin exámenes pendientes",
-                        systemImage: "checkmark.seal.fill",
-                        description: Text("Añade evaluaciones con fecha en tus asignaturas para verlas aquí.")
-                    )
-                } else {
-                    ForEach(nextExams) { item in
-                        HStack(spacing: 12) {
-                            Circle()
-                                .fill(item.color)
-                                .frame(width: 12, height: 12)
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(item.name)
-                                    .font(.headline)
-                                Text("\(item.subtitle) • \(examDateText(item.date))")
+        return List {
+            // MARK: BANNER Y ENCABEZADO
+            Section {
+                HStack(spacing: 16) {
+                    Image(systemName: subject.iconName)
+                        .font(.system(size: 32, weight: .semibold))
+                        .foregroundStyle(subject.color)
+                        .frame(width: 60, height: 60)
+                        .background(subject.color.opacity(0.15))
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(subject.name)
+                            .font(.largeTitle)
+                            .bold()
+                            .minimumScaleFactor(0.6)
+                        HStack {
+                            Text("Nota final:")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                            Text(grade.gradeText)
+                                .font(.title3)
+                                .bold()
+                                .foregroundStyle(grade >= 5.0 ? .green : .red)
+                            if let maxScore = subject.maxScoreSoFar {
+                                Text("/ \(maxScore.flexibleText)")
                                     .font(.subheadline)
                                     .foregroundStyle(.secondary)
                             }
-                            Spacer()
-                            Text("\(item.weight.compactText)%")
-                                .font(.subheadline)
-                                .bold()
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .background(item.color.opacity(0.15))
-                                .foregroundStyle(item.color)
-                                .clipShape(Capsule())
                         }
-                        .padding(.vertical, 4)
+                    }
+                }
+                .padding(.vertical, 8)
+            }
+
+            // MARK: PROPIEDADES (solo se muestran las que tienen valor)
+            Section("Propiedades") {
+                if !subject.teacher.isEmpty {
+                    property("Profesor", systemImage: "person.fill", value: subject.teacher)
+                }
+                if !subject.email.isEmpty {
+                    LabeledContent {
+                        if let url = URL(string: "mailto:\(subject.email)") {
+                            Link(subject.email, destination: url)
+                        } else {
+                            Text(subject.email)
+                        }
+                    } label: {
+                        Label("Email", systemImage: "envelope.fill")
+                    }
+                }
+                if !subject.tutoringLocation.isEmpty {
+                    property("Tutorías", systemImage: "mappin.and.ellipse", value: subject.tutoringLocation)
+                }
+                ForEach(subject.customProperties) { custom in
+                    property(custom.name, systemImage: "tag.fill", value: custom.value.isEmpty ? "—" : custom.value)
+                }
+
+                DisclosureGroup("Más propiedades", isExpanded: $showsMoreProperties) {
+                    if !subject.classroom.isEmpty {
+                        property("Clase", systemImage: "building.2.fill", value: subject.classroom)
+                    }
+                    property("ECTS", systemImage: "graduationcap.fill", value: "\(subject.ects.compactText) ECTS")
+
+                    Button {
+                        showingFormulaSheet = true
+                    } label: {
+                        HStack {
+                            Label("Fórmula", systemImage: "function")
+                                .foregroundStyle(.primary)
+                            Spacer()
+                            Text(subject.formulaMode == .weightedAverage ? "Media ponderada" : "Personalizada")
+                                .bold()
+                                .foregroundStyle(.blue)
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
             }
 
-            // SECCIÓN 3: MIS ASIGNATURAS
-            Section("Mis asignaturas") {
-                if viewModel.subjects.isEmpty {
-                    ContentUnavailableView(
-                        "Sin asignaturas",
-                        systemImage: "books.vertical",
-                        description: Text("Pulsa + para añadir tu primera asignatura.")
-                    )
-                }
-                ForEach(viewModel.subjects) { subject in
-                    NavigationLink(value: subject.id) {
-                        SubjectRow(subject: subject)
-                    }
-                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        Button(role: .destructive) {
-                            subjectToDelete = subject
-                        } label: {
-                            Label("Eliminar", systemImage: "trash")
-                        }
+            // MARK: TABLA DE EVALUACIONES Y NOTAS
+            Section {
+                if subject.evaluations.isEmpty {
+                    Text("No hay evaluaciones registradas en esta materia.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .padding(.vertical, 8)
+                } else {
+                    ForEach(subject.evaluations) { evaluation in
                         Button {
-                            subjectToEdit = subject
+                            evaluationToEdit = evaluation
                         } label: {
-                            Label("Editar", systemImage: "pencil")
+                            EvaluationRow(evaluation: evaluation)
                         }
-                        .tint(.orange)
+                        .buttonStyle(.plain)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button(role: .destructive) {
+                                viewModel.deleteEvaluation(from: subject.id, evaluationID: evaluation.id)
+                            } label: {
+                                Label("Eliminar", systemImage: "trash")
+                            }
+                        }
                     }
+                }
+
+                Button {
+                    showingAddEvaluation = true
+                } label: {
+                    Label("Añadir evaluación", systemImage: "plus.circle.fill")
+                }
+            } header: {
+                Text("Notas")
+            } footer: {
+                if !subject.evaluations.isEmpty, abs(totalWeight - 100) > 0.01 {
+                    Text("Los pesos suman \(totalWeight.compactText)%. Deberían sumar 100%.")
                 }
             }
         }
         .listStyle(.insetGrouped)
-        .navigationTitle("Planner")
+        .navigationTitle(subject.name)
         .navigationBarTitleDisplayMode(.inline)
-        .navigationDestination(for: UUID.self) { subjectID in
-            SubjectDetailView(subjectID: subjectID, viewModel: viewModel)
+        .sheet(isPresented: $showingFormulaSheet) {
+            FormulaConfigView(viewModel: viewModel, subjectID: subject.id)
         }
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    showingTimer = true
-                } label: {
-                    Label("Temporizador de estudio", systemImage: timerManager.isRunning ? "timer.circle.fill" : "timer")
-                }
-                .tint(timerManager.isRunning ? .green : nil)
-                .popover(isPresented: $showingTimer) {
-                    StudyTimerPopover(timerManager: timerManager)
-                        .presentationCompactAdaptation(.popover)
-                }
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    showingAddSubject = true
-                } label: {
-                    Label("Añadir asignatura", systemImage: "plus")
-                }
-            }
+        .sheet(isPresented: $showingAddEvaluation) {
+            EvaluationFormView(viewModel: viewModel, subjectID: subject.id)
         }
-        .sheet(isPresented: $showingAddSubject) {
-            SubjectFormView(viewModel: viewModel)
-        }
-        .sheet(item: $subjectToEdit) { subject in
-            SubjectFormView(viewModel: viewModel, subject: subject)
-        }
-        .confirmationDialog(
-            "¿Eliminar asignatura?",
-            isPresented: Binding(
-                get: { subjectToDelete != nil },
-                set: { if !$0 { subjectToDelete = nil } }
-            ),
-            titleVisibility: .visible,
-            presenting: subjectToDelete
-        ) { subject in
-            Button("Eliminar «\(subject.name)»", role: .destructive) {
-                viewModel.deleteSubject(id: subject.id)
-            }
-        } message: { _ in
-            Text("Se borrarán también sus evaluaciones, sus clases del horario y sus exámenes del calendario.")
-        }
-        // Mantiene "ahora" al día: las clases ya terminadas desaparecen solas
-        .task(id: scenePhase) {
-            guard scenePhase == .active else { return }
-            while !Task.isCancelled {
-                now = Date()
-                try? await Task.sleep(for: .seconds(60))
-            }
+        .sheet(item: $evaluationToEdit) { evaluation in
+            EvaluationFormView(viewModel: viewModel, subjectID: subject.id, evaluation: evaluation)
         }
     }
 
-    // MARK: Datos
-    /// Clases de hoy que aún no han terminado
-    private var remainingSlotsToday: [ScheduleSlot] {
-        let calendar = Calendar.current
-        let weekday = calendar.component(.weekday, from: now)
-        guard let today = Weekday.allCases.first(where: { $0.calendarValue == weekday }) else { return [] }
-
-        let parts = calendar.dateComponents([.hour, .minute], from: now)
-        let nowMinutes = (parts.hour ?? 0) * 60 + (parts.minute ?? 0)
-
-        return viewModel.weeklySchedule
-            .filter { $0.day == today && $0.endMinutes > nowMinutes }
-            .sorted { $0.startMinutes < $1.startMinutes }
-    }
-
-    /// Exámenes del primer día con exámenes por venir (evaluaciones sueltas y componentes).
-    /// Los ya pasados no cuentan.
-    private var nextExamDay: [UpcomingExamItem] {
-        let upcoming = viewModel.subjects
-            .flatMap(\.scheduledExams)
-            .filter { $0.date >= now }
-            .sorted { $0.date < $1.date }
-
-        guard let firstDate = upcoming.first?.date else { return [] }
-        let calendar = Calendar.current
-        return upcoming.filter { calendar.isDate($0.date, inSameDayAs: firstDate) }
-    }
-
-    private func examDateText(_ date: Date?) -> String {
-        guard let date else { return "Sin fecha" }
-        return date.formatted(date: .long, time: .shortened)
+    private func property(_ title: String, systemImage: String, value: String) -> some View {
+        LabeledContent {
+            Text(value)
+        } label: {
+            Label(title, systemImage: systemImage)
+        }
     }
 }
 
-// MARK: FILA DE ASIGNATURA
-private struct SubjectRow: View {
-    let subject: Subject
+// MARK: FILA DE EVALUACIÓN
+private struct EvaluationRow: View {
+    let evaluation: Evaluation
 
     var body: some View {
-        let grade = subject.calculatedGrade
-
-        HStack(spacing: 16) {
-            Image(systemName: subject.iconName)
-                .font(.title)
-                .foregroundStyle(subject.color)
-                .frame(width: 48, height: 48)
-                .background(subject.color.opacity(0.15))
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text(subject.name)
-                    .font(.title3)
-                    .bold()
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            VStack(alignment: .trailing, spacing: 2) {
-                Text(grade.gradeText)
-                    .font(.title3)
-                    .bold()
-                    .foregroundStyle(grade >= 5.0 ? .green : .red)
-                if let maxScore = subject.maxScoreSoFar {
-                    Text("/ \(maxScore.flexibleText)")
-                        .font(.caption2)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(evaluation.name)
+                        .font(.headline)
+                    Text(subtitle)
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                Spacer()
+                gradeLabel
             }
-        }
-        .padding(.vertical, 6)
-    }
 
-    private var subtitle: String {
-        let ects = "\(subject.ects.compactText) ECTS"
-        return subject.teacher.isEmpty ? ects : "\(ects) • Prof. \(subject.teacher)"
-    }
-}
-
-// MARK: FILA DE CLASE (compartida por Dashboard y Horario)
-struct ScheduleSlotRow: View {
-    let slot: ScheduleSlot
-    let subject: Subject
-
-    private var classroom: String { slot.customClassroom ?? subject.classroom }
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Capsule()
-                .fill(subject.color)
-                .frame(width: 4, height: 38)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(subject.name)
-                    .font(.headline)
-                Text("\(slot.startTime.formatted(date: .omitted, time: .shortened)) – \(slot.endTime.formatted(date: .omitted, time: .shortened))")
+            // Componentes (si los hay): fecha y nota de cada uno
+            if evaluation.hasComponents {
+                ForEach(evaluation.components) { component in
+                    HStack {
+                        Text(component.name)
+                        Spacer()
+                        Text(component.date, format: .dateTime.day().month(.abbreviated))
+                        Text(component.grade?.gradeText ?? "–")
+                            .monospacedDigit()
+                            .frame(minWidth: 40, alignment: .trailing)
+                    }
                     .font(.caption)
                     .foregroundStyle(.secondary)
-            }
-            Spacer()
-            if !classroom.isEmpty {
-                Text(classroom)
-                    .font(.caption)
-                    .bold()
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.blue.opacity(0.12))
-                    .foregroundStyle(.blue)
-                    .clipShape(Capsule())
+                }
             }
         }
         .padding(.vertical, 4)
         .contentShape(Rectangle())
     }
-}
 
-// MARK: HORARIO CONFIG (AÑADIR / EDITAR / ELIMINAR CLASES)
-struct ScheduleConfigView: View {
-    let viewModel: PlannerViewModel
-    @State private var selectedDay: Weekday = .monday
-    @State private var activeSheet: SlotSheet?
-
-    private enum SlotSheet: Identifiable {
-        case add
-        case edit(ScheduleSlot)
-
-        var id: String {
-            switch self {
-            case .add: return "add"
-            case .edit(let slot): return slot.id.uuidString
-            }
+    @ViewBuilder
+    private var gradeLabel: some View {
+        if let grade = evaluation.effectiveGrade {
+            Text(grade.gradeText)
+                .font(.title3)
+                .bold()
+                .foregroundStyle(grade >= 5.0 ? .green : .red)
+        } else if evaluation.hasComponents {
+            Text("\(evaluation.gradedComponentsCount)/\(evaluation.components.count)")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        } else {
+            Text("–")
+                .font(.title3)
+                .foregroundStyle(.secondary)
         }
     }
 
-    var body: some View {
-        VStack(spacing: 0) {
-            Picker("Día", selection: $selectedDay) {
-                ForEach(Weekday.allCases) { day in
-                    Text(day.rawValue).tag(day)
-                }
-            }
-            .pickerStyle(.segmented)
-            .padding()
-
-            List {
-                Section {
-                    let daySlots = currentDaySlots
-                    if daySlots.isEmpty {
-                        ContentUnavailableView(
-                            "Sin clases los \(selectedDay.rawValue.lowercased())",
-                            systemImage: "calendar.badge.clock",
-                            description: Text("Pulsa + para añadir una clase a este día.")
-                        )
-                    } else {
-                        ForEach(daySlots) { slot in
-                            if let subject = viewModel.subjects.first(where: { $0.id == slot.subjectID }) {
-                                Button {
-                                    activeSheet = .edit(slot)
-                                } label: {
-                                    ScheduleSlotRow(slot: slot, subject: subject)
-                                }
-                                .buttonStyle(.plain)
-                                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                    Button(role: .destructive) {
-                                        viewModel.deleteSlots(withIDs: [slot.id])
-                                    } label: {
-                                        Label("Eliminar", systemImage: "trash")
-                                    }
-                                    Button {
-                                        activeSheet = .edit(slot)
-                                    } label: {
-                                        Label("Editar", systemImage: "pencil")
-                                    }
-                                    .tint(.orange)
-                                }
-                            }
-                        }
-                    }
-                } header: {
-                    Text("Horario del \(selectedDay.rawValue)")
-                }
-            }
-            .listStyle(.insetGrouped)
+    private var subtitle: String {
+        let weight = "Peso: \(evaluation.weight.compactText)%"
+        if evaluation.hasComponents {
+            let count = evaluation.components.count
+            return "\(weight) • \(count == 1 ? "1 componente" : "\(count) componentes")"
         }
-        .navigationTitle("Horario Semanal")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    activeSheet = .add
-                } label: {
-                    Label("Añadir clase", systemImage: "plus")
-                }
-                .disabled(viewModel.subjects.isEmpty)
-            }
-        }
-        .sheet(item: $activeSheet) { sheet in
-            switch sheet {
-            case .add:
-                SlotFormView(viewModel: viewModel, day: selectedDay)
-            case .edit(let slot):
-                SlotFormView(viewModel: viewModel, day: slot.day, slot: slot)
-            }
-        }
-    }
-
-    private var currentDaySlots: [ScheduleSlot] {
-        viewModel.weeklySchedule
-            .filter { $0.day == selectedDay }
-            .sorted { $0.startMinutes < $1.startMinutes }
+        let date = evaluation.date?.formatted(date: .numeric, time: .shortened) ?? "Sin fecha"
+        return "\(weight) • Fecha: \(date)"
     }
 }
 
-// MARK: FORMULARIO DE CLASE (CREAR Y EDITAR)
-struct SlotFormView: View {
-    @Environment(\.dismiss) private var dismiss
+// MARK: CONFIGURADOR DE FÓRMULA DE CÁLCULO
+struct FormulaConfigView: View {
+    @Environment(\.dismiss) var dismiss
     let viewModel: PlannerViewModel
-
-    private let existingSlot: ScheduleSlot?
-    @State private var day: Weekday
-    @State private var subjectID: UUID?
-    @State private var startTime: Date
-    @State private var endTime: Date
-    @State private var customClassroom: String
-
-    init(viewModel: PlannerViewModel, day: Weekday, slot: ScheduleSlot? = nil) {
-        self.viewModel = viewModel
-        self.existingSlot = slot
-        _day = State(initialValue: slot?.day ?? day)
-        _subjectID = State(initialValue: slot?.subjectID ?? viewModel.subjects.first?.id)
-        _startTime = State(initialValue: slot?.startTime ?? Date())
-        _endTime = State(initialValue: slot?.endTime ?? Date().addingTimeInterval(3600))
-        _customClassroom = State(initialValue: slot?.customClassroom ?? "")
+    let subjectID: UUID
+    
+    @State private var mode: FormulaMode = .weightedAverage
+    @State private var expression: String = "Media"
+    @State private var treatPendingAsZero: Bool = true
+    @State private var didLoad = false
+    
+    private var subject: Subject? {
+        viewModel.subjects.first(where: { $0.id == subjectID })
     }
-
-    private var isEditing: Bool { existingSlot != nil }
-
-    private func minutes(_ date: Date) -> Int {
-        let c = Calendar.current.dateComponents([.hour, .minute], from: date)
-        return (c.hour ?? 0) * 60 + (c.minute ?? 0)
+    
+    /// Copia de la asignatura con la fórmula que se está editando (para la vista previa en vivo)
+    private var draft: Subject? {
+        guard var copy = subject else { return nil }
+        copy.formulaMode = mode
+        copy.customExpression = expression
+        copy.treatPendingAsZero = treatPendingAsZero
+        return copy
     }
-
-    private var hasValidTimes: Bool { minutes(endTime) > minutes(startTime) }
-    private var canSave: Bool { subjectID != nil && hasValidTimes }
-
+    
+    private var result: Result<Double, FormulaError>? {
+        draft?.formulaResult()
+    }
+    
+    private var hasError: Bool {
+        if case .failure = result { return mode == .custom }
+        return false
+    }
+    
+    private var totalWeight: Double {
+        subject?.evaluations.reduce(0) { $0 + $1.weight } ?? 0
+    }
+    
     var body: some View {
         NavigationStack {
             Form {
-                Section("Clase") {
-                    Picker("Asignatura", selection: $subjectID) {
-                        ForEach(viewModel.subjects) { sub in
-                            Text(sub.name).tag(UUID?.some(sub.id))
-                        }
+                Section("Modo de cálculo") {
+                    Picker("Fórmula", selection: $mode) {
+                        Text("Media ponderada").tag(FormulaMode.weightedAverage)
+                        Text("Personalizada").tag(FormulaMode.custom)
                     }
-                    Picker("Día", selection: $day) {
-                        ForEach(Weekday.allCases) { d in
-                            Text(d.rawValue).tag(d)
-                        }
-                    }
+                    .pickerStyle(.segmented)
+                    .padding(.vertical, 4)
                 }
-
-                Section {
-                    DatePicker("Hora de inicio", selection: $startTime, displayedComponents: .hourAndMinute)
-                    DatePicker("Hora de fin", selection: $endTime, displayedComponents: .hourAndMinute)
-                } header: {
-                    Text("Horario")
-                } footer: {
-                    if !hasValidTimes {
-                        Text("La hora de fin debe ser posterior a la de inicio.")
-                            .foregroundStyle(.red)
-                    }
-                }
-
-                Section("Aula (opcional)") {
-                    TextField("Aula específica (ej: Lab 201)", text: $customClassroom)
-                }
-
-                if isEditing, let slot = existingSlot {
+                
+                if mode == .weightedAverage {
                     Section {
-                        Button("Eliminar clase", role: .destructive) {
-                            viewModel.deleteSlots(withIDs: [slot.id])
-                            dismiss()
+                        Text("Nota = Σ(Nota_i × Peso_i / 100)")
+                            .font(.system(.subheadline, design: .monospaced))
+                            .bold()
+                            .foregroundStyle(.blue)
+                        LabeledContent("Suma de los pesos") {
+                            Text("\(totalWeight, format: .number.precision(.fractionLength(0...1)))%")
+                                .foregroundStyle(abs(totalWeight - 100) < 0.01 ? Color.green : Color.orange)
+                        }
+                    } header: {
+                        Text("Fórmula estándar")
+                    } footer: {
+                        Text("Multiplica cada nota por su porcentaje de peso en la tabla de evaluaciones y las suma.")
+                    }
+                } else {
+                    Section {
+                        TextField("Expresión", text: $expression, axis: .vertical)
+                            .font(.system(.body, design: .monospaced))
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                        
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                insertButton("Media", systemImage: "percent")
+                                ForEach(subject?.evaluations ?? []) { item in
+                                    let id = FormulaEvaluator.identifier(for: item.name)
+                                    if !id.isEmpty {
+                                        insertButton(id)
+                                    }
+                                }
+                                insertButton("min(", tint: .blue)
+                                insertButton("max(", tint: .purple)
+                            }
+                            .padding(.vertical, 2)
+                        }
+                    } header: {
+                        Text("Expresión personalizada")
+                    } footer: {
+                        Text("Operadores + − * / ^ y paréntesis. min(a, b, …) y max(a, b, …) devuelven el menor o el mayor de todos los valores que pongas. «Media» es la media ponderada con los porcentajes de tus evaluaciones; el resto de variables son los nombres de las evaluaciones (sin espacios). Decimales con punto: 0.6")
+                    }
+                }
+                
+                Section {
+                    Toggle("Tratar pendientes como 0", isOn: $treatPendingAsZero)
+                } footer: {
+                    Text(treatPendingAsZero
+                         ? "Las evaluaciones sin nota cuentan como un 0."
+                         : "La media se calcula solo con las evaluaciones que ya tienen nota. En la fórmula personalizada, usar una evaluación sin nota da error.")
+                }
+                
+                Section("Vista previa") {
+                    if let subject {
+                        switch result {
+                        case .success(let value)?:
+                            LabeledContent("Nota calculada (\(subject.name))") {
+                                Text(value, format: .number.precision(.fractionLength(2)))
+                                    .font(.title2)
+                                    .bold()
+                                    .foregroundStyle(value >= 5.0 ? .green : .red)
+                            }
+                        case .failure(let error)?:
+                            if mode == .custom {
+                                Label(error.localizedDescription, systemImage: "exclamationmark.triangle.fill")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.orange)
+                            }
+                        case nil:
+                            EmptyView()
+                        }
+                        
+                        if mode == .custom {
+                            LabeledContent("Media ponderada") {
+                                Text(draft?.weightedAverage ?? 0, format: .number.precision(.fractionLength(2)))
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     }
                 }
             }
-            .navigationTitle(isEditing ? "Editar clase" : "Nueva clase")
+            .navigationTitle("Configurar fórmula")
             .navigationBarTitleDisplayMode(.inline)
+            .onAppear {
+                guard !didLoad, let subject else { return }
+                didLoad = true
+                mode = subject.formulaMode
+                expression = subject.customExpression
+                treatPendingAsZero = subject.treatPendingAsZero
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancelar") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Guardar") {
-                        save()
+                        viewModel.updateFormula(
+                            subjectID: subjectID,
+                            mode: mode,
+                            expression: expression,
+                            treatPendingAsZero: treatPendingAsZero
+                        )
                         dismiss()
                     }
-                    .disabled(!canSave)
+                    .disabled(hasError)
                 }
             }
         }
     }
-
-    private func save() {
-        guard let subjectID else { return }
-        let trimmed = customClassroom.trimmingCharacters(in: .whitespaces)
-        let slot = ScheduleSlot(
-            id: existingSlot?.id ?? UUID(),
-            day: day,
-            subjectID: subjectID,
-            startTime: startTime,
-            endTime: endTime,
-            customClassroom: trimmed.isEmpty ? nil : trimmed
-        )
-        if isEditing {
-            viewModel.updateSlot(slot)
-        } else {
-            viewModel.addSlot(slot)
+    
+    private func insertButton(_ text: String, systemImage: String? = nil, tint: Color = .accentColor) -> some View {
+        Button {
+            expression += text
+        } label: {
+            if let systemImage {
+                Label(text, systemImage: systemImage)
+            } else {
+                Text(text)
+            }
         }
+        .font(.caption)
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .tint(tint)
     }
 }
 
-// MARK: FORMULARIO DE ASIGNATURA (CREAR Y EDITAR)
-struct SubjectFormView: View {
+// MARK: FORMULARIO DE EVALUACIÓN (CREAR Y EDITAR)
+// Una evaluación puede tener fecha y nota propias, o dividirse en componentes
+// (cada uno con nombre, fecha y nota). En ese caso la nota es la media simple
+// de los componentes y la evaluación no tiene fecha propia.
+struct EvaluationFormView: View {
     @Environment(\.dismiss) private var dismiss
     let viewModel: PlannerViewModel
-    private let subject: Subject?
+    let subjectID: UUID
+    private let evaluation: Evaluation?
 
     @State private var name: String
-    @State private var teacher: String
-    @State private var email: String
-    @State private var tutoringLocation: String
-    @State private var classroom: String
-    @State private var ectsText: String
-    @State private var color: Color
-    @State private var iconName: String
-    @State private var showsExtraInfo: Bool
-    @State private var customProperties: [CustomProperty]
+    @State private var weightText: String
+    @State private var hasDate: Bool
+    @State private var date: Date
+    @State private var gradeText: String
+    @State private var usesComponents: Bool
+    @State private var components: [EvaluationComponent]
+    @State private var componentDraft: EvaluationComponent?
 
-    init(viewModel: PlannerViewModel, subject: Subject? = nil) {
+    init(viewModel: PlannerViewModel, subjectID: UUID, evaluation: Evaluation? = nil) {
         self.viewModel = viewModel
-        self.subject = subject
-        _name = State(initialValue: subject?.name ?? "")
-        _teacher = State(initialValue: subject?.teacher ?? "")
-        _email = State(initialValue: subject?.email ?? "")
-        _tutoringLocation = State(initialValue: subject?.tutoringLocation ?? "")
-        _classroom = State(initialValue: subject?.classroom ?? "")
-        _ectsText = State(initialValue: (subject?.ects ?? 6).compactText)
-        _color = State(initialValue: subject?.color ?? .blue)
-        _iconName = State(initialValue: subject?.iconName ?? "book.fill")
-        _customProperties = State(initialValue: subject?.customProperties ?? [])
-        _showsExtraInfo = State(initialValue: subject.map {
-            !$0.teacher.isEmpty || !$0.email.isEmpty || !$0.classroom.isEmpty || !$0.tutoringLocation.isEmpty
-        } ?? false)
+        self.subjectID = subjectID
+        self.evaluation = evaluation
+        _name = State(initialValue: evaluation?.name ?? "")
+        _weightText = State(initialValue: (evaluation?.weight ?? 20).compactText)
+        _hasDate = State(initialValue: evaluation?.date != nil)
+        _date = State(initialValue: evaluation?.date ?? Date())
+        _gradeText = State(initialValue: evaluation?.grade?.gradeText ?? "")
+        _usesComponents = State(initialValue: evaluation?.hasComponents ?? false)
+        _components = State(initialValue: evaluation?.components ?? [])
     }
 
-    private var isEditing: Bool { subject != nil }
+    private var isEditing: Bool { evaluation != nil }
     private var trimmedName: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    /// Peso válido (0–100) o nil
+    private var weight: Double? {
+        guard let value = weightText.decimalValue, (0...100).contains(value) else { return nil }
+        return value
+    }
+
+    private var trimmedGrade: String { gradeText.trimmingCharacters(in: .whitespaces) }
+    private var grade: Double? { trimmedGrade.decimalValue }
+    private var gradeIsValid: Bool {
+        trimmedGrade.isEmpty || (grade.map { (0...10).contains($0) } ?? false)
+    }
+
+    private var canSave: Bool {
+        guard !trimmedName.isEmpty, weight != nil else { return false }
+        return usesComponents ? !components.isEmpty : gradeIsValid
+    }
+
+    /// Nota que saldría ahora mismo con los componentes actuales
+    private var componentsMean: Double? {
+        Evaluation(name: "", weight: 0, components: components).effectiveGrade
+    }
 
     var body: some View {
         NavigationStack {
             Form {
-                Section("Asignatura") {
-                    TextField("Nombre de la materia", text: $name)
-                    LabeledContent("Créditos ECTS") {
-                        TextField("6", text: $ectsText)
+                Section {
+                    TextField("Nombre (ej: Evaluación continua)", text: $name)
+                    LabeledContent("Peso (%)") {
+                        TextField("20", text: $weightText)
                             .keyboardType(.decimalPad)
                             .multilineTextAlignment(.trailing)
                     }
-                    ColorPicker("Color", selection: $color, supportsOpacity: false)
-                }
-
-                Section("Icono") {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 48))], spacing: 12) {
-                        ForEach(availableSubjectIcons, id: \.0) { icon in
-                            Button {
-                                iconName = icon.0
-                            } label: {
-                                Image(systemName: icon.0)
-                                    .font(.title2)
-                                    .foregroundStyle(iconName == icon.0 ? color : .gray)
-                                    .frame(width: 46, height: 46)
-                                    .background(iconName == icon.0 ? color.opacity(0.2) : Color.clear)
-                                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 8)
-                                            .stroke(iconName == icon.0 ? color : Color.clear, lineWidth: 2)
-                                    )
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel(icon.1)
-                            .accessibilityAddTraits(iconName == icon.0 ? .isSelected : [])
-                        }
+                } header: {
+                    Text("Evaluación")
+                } footer: {
+                    if weight == nil {
+                        Text("El peso debe estar entre 0 y 100.")
+                            .foregroundStyle(.red)
                     }
-                    .padding(.vertical, 6)
                 }
 
                 Section {
-                    DisclosureGroup("Contacto y aula (opcional)", isExpanded: $showsExtraInfo) {
-                        TextField("Profesor", text: $teacher)
-                        TextField("Email", text: $email)
-                            .keyboardType(.emailAddress)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                        TextField("Aula", text: $classroom)
-                        TextField("Tutorías", text: $tutoringLocation)
-                    }
+                    Toggle("Dividir en componentes", isOn: $usesComponents.animation())
+                } footer: {
+                    Text(usesComponents
+                         ? "La nota será la media de los componentes y la evaluación no tendrá fecha propia."
+                         : "Actívalo si la nota sale de varias partes (parciales, prácticas…).")
                 }
 
-                Section("Propiedades personalizadas") {
-                    ForEach($customProperties) { $property in
-                        HStack(spacing: 12) {
-                            TextField("Nombre", text: $property.name)
-                            TextField("Valor", text: $property.value)
-                                .multilineTextAlignment(.trailing)
-                                .foregroundStyle(.secondary)
+                if usesComponents {
+                    Section {
+                        ForEach(components) { component in
+                            Button {
+                                componentDraft = component
+                            } label: {
+                                ComponentRow(component: component)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .onDelete { components.remove(atOffsets: $0) }
+
+                        Button {
+                            componentDraft = EvaluationComponent(name: "", date: Date())
+                        } label: {
+                            Label("Añadir componente", systemImage: "plus.circle.fill")
+                        }
+                    } header: {
+                        Text("Componentes")
+                    } footer: {
+                        componentsFooter
+                    }
+                } else {
+                    Section("Fecha del examen") {
+                        Toggle("Asignar fecha", isOn: $hasDate)
+                        if hasDate {
+                            DatePicker("Fecha y hora", selection: $date, displayedComponents: [.date, .hourAndMinute])
                         }
                     }
-                    .onDelete { customProperties.remove(atOffsets: $0) }
 
-                    Button {
-                        customProperties.append(CustomProperty())
-                    } label: {
-                        Label("Añadir propiedad", systemImage: "plus.circle.fill")
+                    Section {
+                        TextField("Nota (0 - 10)", text: $gradeText)
+                            .keyboardType(.decimalPad)
+                    } header: {
+                        Text("Calificación (opcional)")
+                    } footer: {
+                        if !gradeIsValid {
+                            Text("La nota debe estar entre 0 y 10.")
+                                .foregroundStyle(.red)
+                        }
                     }
                 }
             }
-            .navigationTitle(isEditing ? "Editar Asignatura" : "Nueva Asignatura")
+            .navigationTitle(isEditing ? "Editar Evaluación" : "Nueva Evaluación")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -585,94 +542,143 @@ struct SubjectFormView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(isEditing ? "Actualizar" : "Guardar") { save() }
-                        .disabled(trimmedName.isEmpty)
+                        .disabled(!canSave)
+                }
+            }
+            .sheet(item: $componentDraft) { draft in
+                ComponentFormView(component: draft) { saved in
+                    if let index = components.firstIndex(where: { $0.id == saved.id }) {
+                        components[index] = saved
+                    } else {
+                        components.append(saved)
+                    }
+                    components.sort { $0.date < $1.date }
                 }
             }
         }
     }
 
-    private func save() {
-        let ects = ectsText.decimalValue ?? subject?.ects ?? 6
-        // Se descartan las propiedades sin nombre
-        let cleanedProperties = customProperties.compactMap { property -> CustomProperty? in
-            let name = property.name.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !name.isEmpty else { return nil }
-            return CustomProperty(
-                id: property.id,
-                name: name,
-                value: property.value.trimmingCharacters(in: .whitespacesAndNewlines)
-            )
-        }
-        if let subject {
-            viewModel.updateSubject(
-                id: subject.id,
-                name: trimmedName,
-                iconName: iconName,
-                teacher: teacher,
-                email: email,
-                tutoringLocation: tutoringLocation,
-                classroom: classroom,
-                ects: ects,
-                colorName: color.toHex(),
-                customProperties: cleanedProperties
-            )
+    @ViewBuilder
+    private var componentsFooter: some View {
+        if components.isEmpty {
+            Text("Añade al menos un componente.")
+        } else if let mean = componentsMean {
+            Text("Nota de la evaluación: \(mean.gradeText) (media simple).")
         } else {
-            viewModel.addSubject(
-                name: trimmedName,
-                iconName: iconName,
-                teacher: teacher,
-                email: email,
-                tutoringLocation: tutoringLocation,
-                classroom: classroom,
-                ects: ects,
-                colorName: color.toHex(),
-                customProperties: cleanedProperties
-            )
+            Text("La nota se calculará cuando todos los componentes tengan nota.")
+        }
+    }
+
+    private func save() {
+        guard let weight else { return }
+
+        let result = Evaluation(
+            id: evaluation?.id ?? UUID(),
+            name: trimmedName,
+            weight: weight,
+            date: usesComponents ? nil : (hasDate ? date : nil),
+            period: evaluation?.period ?? "10",
+            grade: usesComponents ? nil : grade,
+            calendarEventID: evaluation?.calendarEventID,
+            components: usesComponents ? components : []
+        )
+
+        if isEditing {
+            viewModel.updateEvaluation(in: subjectID, result)
+        } else {
+            viewModel.addEvaluation(to: subjectID, result)
         }
         dismiss()
     }
 }
 
-// MARK: COLECCIÓN DE ICONOS DISPONIBLES
-let availableSubjectIcons = [
-    ("book.fill", "General"),
-    ("function", "Cálculo"),
-    ("x.squareroot", "Álgebra"),
-    ("atom", "Física"),
-    ("flask.fill", "Química"),
-    ("leaf.fill", "Biología"),
-    ("desktopcomputer", "Informática"),
-    ("cpu", "Hardware"),
-    ("network", "Redes"),
-    ("terminal.fill", "Sistemas"),
-    ("bolt.fill", "Electricidad"),
-    ("gearshape.fill", "Mecánica"),
-    ("wrench.and.screwdriver.fill", "Taller"),
-    ("paintpalette.fill", "Arte/Diseño"),
-    ("pencil.and.outline", "Dibujo"),
-    ("camera.fill", "Audiovisual"),
-    ("globe.americas.fill", "Geografía"),
-    ("text.book.closed.fill", "Lengua/Lit"),
-    ("a.square.fill", "Idiomas"),
-    ("building.columns.fill", "Historia"),
-    ("doc.text.fill", "Derecho"),
-    ("stethoscope", "Medicina"),
-    ("cross.case.fill", "Salud"),
-    ("pill.fill", "Farmacia"),
-    ("cross.vial.fill", "Laboratorio"),
-    ("waveform.path.ecg", "Biomédica"),
-    ("brain.head.profile", "Psicología"),
-    ("chart.bar.fill", "Estadística"),
-    ("chart.pie.fill", "Finanzas"),
-    ("number.square.fill", "Mates/Eco"),
-    ("briefcase.fill", "Empresa"),
-    ("lightbulb.fill", "Filosofía"),
-    ("person.3.fill", "Sociología"),
-    ("music.note", "Música"),
-    ("theatermasks.fill", "Teatro"),
-    ("figure.run", "Deporte"),
-    ("map.fill", "Topografía"),
-    ("antenna.radiowaves.left.and.right", "Telecom"),
-    ("shield.checkerboard", "Ciberseguridad"),
-    ("eye.fill", "Óptica")
-]
+// MARK: FILA DE COMPONENTE (dentro del formulario)
+private struct ComponentRow: View {
+    let component: EvaluationComponent
+
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(component.name)
+                Text(component.date.formatted(date: .abbreviated, time: .shortened))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Text(component.grade?.gradeText ?? "–")
+                .foregroundStyle(.secondary)
+        }
+        .contentShape(Rectangle())
+    }
+}
+
+// MARK: FORMULARIO DE COMPONENTE (nombre, fecha y nota opcional)
+struct ComponentFormView: View {
+    @Environment(\.dismiss) private var dismiss
+    private let original: EvaluationComponent
+    private let onSave: (EvaluationComponent) -> Void
+
+    @State private var name: String
+    @State private var date: Date
+    @State private var gradeText: String
+
+    init(component: EvaluationComponent, onSave: @escaping (EvaluationComponent) -> Void) {
+        original = component
+        self.onSave = onSave
+        _name = State(initialValue: component.name)
+        _date = State(initialValue: component.date)
+        _gradeText = State(initialValue: component.grade?.gradeText ?? "")
+    }
+
+    private var isNew: Bool { original.name.isEmpty }
+    private var trimmedName: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var trimmedGrade: String { gradeText.trimmingCharacters(in: .whitespaces) }
+    private var grade: Double? { trimmedGrade.decimalValue }
+    private var gradeIsValid: Bool {
+        trimmedGrade.isEmpty || (grade.map { (0...10).contains($0) } ?? false)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Componente") {
+                    TextField("Nombre (ej: Test 1)", text: $name)
+                    DatePicker("Fecha y hora", selection: $date, displayedComponents: [.date, .hourAndMinute])
+                }
+
+                Section {
+                    TextField("Nota (0 - 10)", text: $gradeText)
+                        .keyboardType(.decimalPad)
+                } header: {
+                    Text("Calificación (opcional)")
+                } footer: {
+                    if !gradeIsValid {
+                        Text("La nota debe estar entre 0 y 10.")
+                            .foregroundStyle(.red)
+                    }
+                }
+            }
+            .navigationTitle(isNew ? "Nuevo componente" : "Editar componente")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancelar") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Guardar") { save() }
+                        .disabled(trimmedName.isEmpty || !gradeIsValid)
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private func save() {
+        var result = original
+        result.name = trimmedName
+        result.date = date
+        result.grade = trimmedGrade.isEmpty ? nil : grade
+        onSave(result)
+        dismiss()
+    }
+}
